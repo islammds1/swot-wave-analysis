@@ -319,7 +319,7 @@ plt.show()
 # 7) PUBLICATION PLOT
 # ============================================================
 
-PUB_LABELS   = ["D1A", "D1D", "D2", "D3A", "D3B"]
+PUB_LABELS   = ["D1A", "D1D", "D2", "D3A", "D3D"]
 KLIM_PUB     = 8.0
 res_by_label = {r["label"]: r for r in results if r is not None}
 
@@ -400,7 +400,10 @@ def _zone(lbl):
 
 records = []
 for i_b, r in enumerate(results):
-    if r is None: continue
+    if r is None:
+        continue
+    if r["label"] == "D2":
+        continue
     cx, cy, half_a, half_c = r["box_utm"]
     lam_ci95 = r.get("peak_ci95_lam", np.nan)
 
