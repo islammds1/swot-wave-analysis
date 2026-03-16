@@ -219,6 +219,32 @@ for i_box, (cx, cy, half_a, half_c) in enumerate(BOXES):
     print(f"  θ = {peak_dir_geo:.1f} ± {peak_std_dir:.1f}°  "
           f"R = {R:.2f}  n_dir = {n_dir}")
 
+    # ── Directional reliability flag ──────────────────────────────────────────
+    # Thresholds follow the uncertainty framework in the manuscript:
+    #   R >= 0.95  → high quality       → 95% CI ≈ ±2–5°
+    #   R >= 0.83  → moderate quality   → 95% CI ≈ ±10–14°
+    #   R >= 0.70  → low quality        → use with caution
+    #   R <  0.70  → unreliable         → excluded from quantitative analysis
+    if R < 0.70:
+        dir_quality  = "unreliable"
+        dir_reliable = False
+        print(f"  ⚠ WARNING: R = {R:.2f} < 0.70 — directional estimate "
+              f"flagged as UNRELIABLE for {label}. "
+              f"Excluded from quantitative refraction/diffraction analysis.")
+    elif R < 0.83:
+        dir_quality  = "low"
+        dir_reliable = True
+        print(f"  ⚠ NOTE: R = {R:.2f} — low directional confidence for {label}. "
+              f"Use with caution.")
+    elif R < 0.95:
+        dir_quality  = "moderate"
+        dir_reliable = True
+        print(f"  ℹ  R = {R:.2f} — moderate directional confidence for {label}.")
+    else:
+        dir_quality  = "high"
+        dir_reliable = True
+        print(f"  ✓  R = {R:.2f} — high directional confidence for {label}.")
+
     results.append({
         "label"         : label,
         "box_utm"       : (cx, cy, half_a, half_c),
@@ -236,6 +262,9 @@ for i_box, (cx, cy, half_a, half_c) in enumerate(BOXES):
         "peak_dir_sat"  : peak_dir_sat,
         "dir_R"         : R,
         "n_dir_patches" : n_dir,
+        # Directional reliability
+        "dir_reliable"  : dir_reliable,
+        "dir_quality"   : dir_quality,
         # Depth & period
         "h_mean"        : h_box,
         "T_peak"        : T_peak,
@@ -248,17 +277,20 @@ print(f"\n✓ {sum(r is not None for r in results)}/{len(BOXES)} boxes processed
 # 5) SUMMARY TABLE
 # ============================================================
 
-print(f"\n{'='*75}")
+print(f"\n{'='*90}")
 print(f"{'Box':<8} {'h [m]':>7} {'λ [m]':>8} {'±1σ':>6} {'95CI':>6} "
-      f"{'T [s]':>6} {'θ [°N]':>8} {'±1σ':>6} {'R':>5} {'Regime':>12}")
-print("-"*75)
+      f"{'T [s]':>6} {'θ [°N]':>8} {'±1σ':>6} {'R':>5} "
+      f"{'Quality':>12} {'Regime':>12}")
+print("-"*90)
 for r in results:
-    if r is None: continue
+    if r is None:
+        continue
+    flag = "  ← EXCLUDED" if not r["dir_reliable"] else ""
     print(f"{r['label']:<8} {r['h_mean']:>7.1f} {r['peak_lam']:>8.1f} "
           f"{r['peak_std_lam']:>6.1f} {r['peak_ci95_lam']:>6.1f} "
           f"{r['T_peak']:>6.2f} {r['peak_dir_geo']:>8.1f} "
           f"{r['peak_std_dir']:>6.1f} {r['dir_R']:>5.2f} "
-          f"{r['T_regime']:>12}")
+          f"{r['dir_quality']:>12} {r['T_regime']:>12}{flag}")
 
 # ============================================================
 # 6) DIAGNOSTIC PLOTS — E_ssh | Coherence | Phase
@@ -297,10 +329,30 @@ for i, r in enumerate(results):
 
     im2 = ax2.pcolormesh(kc, ka, r["phase_deg"],
                           cmap="seismic", vmin=-180, vmax=180, shading="auto")
-    ax2.set_title(f"Phase C_cross [°]\n"
-                  f"λ={r['peak_lam']:.0f}±{r['peak_std_lam']:.0f} m  "
-                  f"θ={r['peak_dir_geo']:.0f}±{r['peak_std_dir']:.0f}°",
-                  fontsize=8)
+
+    # ── Colour-code phase panel background by directional reliability ─────────
+    if r["dir_R"] < 0.70:
+        ax2.set_facecolor("#ffe6e6")   # light red  → unreliable
+        reliability_note = f"\n⚠ R={r['dir_R']:.2f} UNRELIABLE"
+        title_color = "red"
+    elif r["dir_R"] < 0.83:
+        ax2.set_facecolor("#fff3e0")   # light orange → low
+        reliability_note = f"\n(low R={r['dir_R']:.2f})"
+        title_color = "darkorange"
+    elif r["dir_R"] < 0.95:
+        ax2.set_facecolor("#fffde7")   # light yellow → moderate
+        reliability_note = f"\n(mod R={r['dir_R']:.2f})"
+        title_color = "goldenrod"
+    else:
+        reliability_note = f"\n(R={r['dir_R']:.2f} ✓)"
+        title_color = "darkgreen"
+
+    ax2.set_title(
+        f"Phase C_cross [°]\n"
+        f"λ={r['peak_lam']:.0f}±{r['peak_std_lam']:.0f} m  "
+        f"θ={r['peak_dir_geo']:.0f}±{r['peak_std_dir']:.0f}°"
+        f"{reliability_note}",
+        fontsize=7, color=title_color)
     ax2.set_xlim(-KLIM, KLIM); ax2.set_ylim(-KLIM, KLIM)
     cb2 = fig.colorbar(im2, ax=ax2, pad=0.02)
     cb2.set_ticks([-180, -90, 0, 90, 180])
@@ -354,8 +406,21 @@ for col, lbl in enumerate(PUB_LABELS):
         im   = ax.pcolormesh(kc, ka, data, cmap=CMAPS[row], shading="auto",
                               vmin=vmin, vmax=vmax)
         ax.set_xlim(-KLIM_PUB, KLIM_PUB); ax.set_ylim(-KLIM_PUB, KLIM_PUB)
+
         if row == 0:
-            ax.set_title(lbl, fontsize=16, fontweight="bold", pad=6)
+            # ── Add reliability badge to column title in pub figure ───────────
+            if r["dir_quality"] == "unreliable":
+                badge = " ⚠"
+                tc    = "red"
+            elif r["dir_quality"] == "low":
+                badge = " !"
+                tc    = "darkorange"
+            else:
+                badge = ""
+                tc    = "black"
+            ax.set_title(lbl + badge, fontsize=16, fontweight="bold",
+                         pad=6, color=tc)
+
         if col == n_pub - 1:
             cb = fig_pub.colorbar(im, ax=ax, pad=0.03, fraction=0.046)
             cb.ax.tick_params(labelsize=16)
@@ -431,6 +496,15 @@ for i_b, r in enumerate(results):
         "direction_1sig"    : _f(r["peak_std_dir"]),
         "direction_95ci"    : _f(r["peak_ci95_dir"]),
         "dir_R"             : _f(r["dir_R"]),
+        # ── Reliability columns ───────────────────────────────────────────────
+        # dir_quality  : "high" (R≥0.95) | "moderate" (R≥0.83) |
+        #                "low"  (R≥0.70) | "unreliable" (R<0.70)
+        # dir_reliable : True if R≥0.70; False if R<0.70
+        #                Boxes with dir_reliable=False are excluded from the
+        #                quantitative refraction / diffraction analysis in the
+        #                manuscript (D3C and D3D are the expected candidates).
+        "dir_quality"       : r.get("dir_quality",  "unknown"),
+        "dir_reliable"      : r.get("dir_reliable", False),
         "n_patches"         : r["n_patches"],
         "n_lam_patches"     : r["n_lam_patches"],
         "n_dir_patches"     : r["n_dir_patches"],
@@ -441,12 +515,54 @@ for i_b, r in enumerate(results):
 df   = pd.DataFrame(records)
 stem = f"swot_wave_results_{_date_str}_cycle{_cycle}_pass{_pass}"
 
+# ── Report unreliable boxes at end of run ─────────────────────────────────────
+df_unreliable = df[df["dir_reliable"] == False].copy()
+if not df_unreliable.empty:
+    print(f"\n{'='*60}")
+    print("⚠ Boxes flagged as directionally UNRELIABLE (R < 0.70):")
+    print(df_unreliable[["box_id", "dir_R", "dir_quality"]].to_string(index=False))
+    print("  → Direction values retained in output file but flagged.")
+    print("  → Exclude these boxes from quantitative refraction analysis.")
+    print(f"{'='*60}")
+else:
+    print("\n✓ All boxes passed the directional reliability threshold (R ≥ 0.70).")
+
 xlsx_path = os.path.join(OUT_DIR, stem + ".xlsx")
 csv_path  = os.path.join(OUT_DIR, stem + ".csv")
 
 with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
     df.to_excel(writer, index=False, sheet_name="SWOT_wave_results")
     ws = writer.sheets["SWOT_wave_results"]
+
+    # ── Highlight unreliable rows in red in the Excel output ─────────────────
+    from openpyxl.styles import PatternFill, Font
+    red_fill   = PatternFill(start_color="FFE6E6", end_color="FFE6E6",
+                              fill_type="solid")
+    orange_fill = PatternFill(start_color="FFF3E0", end_color="FFF3E0",
+                               fill_type="solid")
+    red_font   = Font(color="CC0000", bold=True)
+
+    # Find column index for dir_quality (1-based in openpyxl)
+    header_row  = [cell.value for cell in ws[1]]
+    try:
+        q_col = header_row.index("dir_quality") + 1
+        r_col = header_row.index("dir_reliable") + 1
+    except ValueError:
+        q_col = r_col = None
+
+    if q_col is not None:
+        for row_idx, row_cells in enumerate(ws.iter_rows(min_row=2), start=2):
+            quality_val  = ws.cell(row=row_idx, column=q_col).value
+            reliable_val = ws.cell(row=row_idx, column=r_col).value
+            if quality_val == "unreliable":
+                for cell in row_cells:
+                    cell.fill = red_fill
+                ws.cell(row=row_idx, column=q_col).font = red_font
+            elif quality_val == "low":
+                for cell in row_cells:
+                    cell.fill = orange_fill
+
+    # ── Auto-size columns ─────────────────────────────────────────────────────
     for col_cells in ws.columns:
         max_len = max((len(str(c.value)) for c in col_cells if c.value), default=10)
         ws.column_dimensions[col_cells[0].column_letter].width = max_len + 3
@@ -456,4 +572,7 @@ df.to_csv(csv_path, index=False, float_format="%.4f")
 print(f"\n✓ Saved:  {xlsx_path}")
 print(f"✓ Saved:  {csv_path}")
 print(f"  {len(df)} rows  |  {len(df['box_id'].unique())} boxes")
+print(f"  Reliable boxes : {df['dir_reliable'].sum()}")
+print(f"  Unreliable boxes (R<0.70, excluded from analysis): "
+      f"{(~df['dir_reliable']).sum()}")
 print("\n" + df.to_string(index=False))
