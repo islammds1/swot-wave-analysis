@@ -4,26 +4,68 @@ ambiguity.py
 180° directional ambiguity resolution for SWOT SSH × σ₀ cross-spectra,
 and coordinate-frame conversion utilities.
 
-Theory (Ardhuin et al. 2024)
------------------------------
-The imaginary part of the SSH × σ₀ cross-spectrum satisfies:
+Theory
+------
+The 2D power spectrum E(kx, ky) is symmetric about the origin, so a
+spectral peak at (ka, kc) is indistinguishable from one at (−ka, −kc)
+on amplitude alone.  The SSH–σ₀ cross-spectrum C = F_ssh · conj(F_σ₀)
+carries two physically distinct phase signals that together resolve this
+ambiguity for any propagation direction:
 
-    Im[ C_SSH,σ₀(k) ]  ∝  k_range · E(k)
+1. Tilt modulation (cross-track / range component)
+   ------------------------------------------------
+   The radar-facing slope of each wave crest modulates σ₀.  For waves
+   with a cross-track wavenumber component kc, this produces a
+   cross-spectrum with phase ≈ ±90°, so
 
-where k_range = projection of the wave vector **k** onto the radar
-range direction (≈ cross-track for SWOT).
+       Im(C) ∝ kc · E(k)
 
-RIGHT swath  (look direction ≈ +cross-track):
-    Im(C) > 0  →  positive range-direction group velocity
-               →  wave propagates TOWARD the satellite  →  keep candidate
-    Im(C) < 0  →  wave propagates AWAY from the satellite  →  flip 180°
+   RIGHT swath (look ≈ +cross-track):  Im(C) > 0 → wave toward radar
+                                        Im(C) < 0 → wave away  → flip
 
-No separate along-track / cross-track branch is needed; the sign rule
-is universal because Im(C) encodes the full range component of **k**.
+   This signal is strong when |kc| is large (near-cross-track swell)
+   and vanishes for purely along-track propagation.
+
+2. Velocity bunching (along-track component)
+   ------------------------------------------
+   KaRIN Doppler beam-forming displaces ocean features along the
+   satellite track in proportion to their line-of-sight velocity.
+   This imprints σ₀ oscillations that are OUT OF PHASE with SSH when
+   the wave propagates in the satellite flight direction (phase ≈ 180°),
+   and IN PHASE when the wave opposes the satellite (phase ≈ 0°):
+
+       Re(C) > 0 → wave opposes satellite (ka < 0)
+       Re(C) < 0 → wave same as satellite (ka > 0)
+
+   Equivalently, the VB disambiguation signal is −sign(ka) · Re(C),
+   which is positive when the candidate direction is confirmed.
+
+   This signal is strong when |ka| is large (near-along-track swell)
+   and vanishes for purely cross-track propagation.
+
+Combined signal
+---------------
+The two signals are weighted by the propagation direction of the
+candidate peak so that each contributes in proportion to its reliability:
+
+    w_tilt = |kc_cand| / K_cand   (cross-track fraction)
+    w_vb   = |ka_cand| / K_cand   (along-track fraction)
+
+    D = w_tilt · (sign_tilt · Im_avg)
+      + w_vb   · (−sign(ka_cand) · Re_avg)
+
+    D ≥ 0  →  keep candidate (ka_cand, kc_cand)
+    D < 0  →  flip to (−ka_cand, −kc_cand)
+
+This formulation reduces to the pure tilt rule for cross-track waves
+and to the pure VB rule (following Ardhuin et al. 2024) for along-track
+waves, with a smooth directional blend in between.
 
 References
 ----------
-Ardhuin, F. et al. (2024)  [full citation to be added]
+Ardhuin, F. et al. (2024). Phase-resolved swells across ocean basins in
+SWOT altimetry data. Geophysical Research Letters, 51, e2024GL109658.
+https://doi.org/10.1029/2024GL109658
 """
 
 import numpy as np
@@ -46,55 +88,72 @@ def resolve_180_ardhuin2024(
     coh_min=0.05,
 ):
     """
-    Resolve the 180° directional ambiguity following Ardhuin et al. (2024).
+    Resolve the 180° directional ambiguity using both tilt modulation
+    (Im(C)) and velocity bunching (Re(C)) signals from the SSH–σ₀
+    cross-spectrum, following the physical framework of Ardhuin et al. (2024).
+
+    The two signals are weighted by the candidate wave's propagation
+    direction so that the method is reliable for both cross-track and
+    along-track propagating waves:
+
+        D = w_tilt · (sign_tilt · Im_avg)
+          + w_vb   · (−sign(ka_cand) · Re_avg)
+
+    where w_tilt = |kc_cand|/K and w_vb = |ka_cand|/K.
 
     Parameters
     ----------
     ka_cand, kc_cand : float
         Candidate peak wavenumber components [rad/m] from the ka ≥ 0
-        half-plane.  These are ambiguous: the true direction is either
-        (ka_cand, kc_cand) or (−ka_cand, −kc_cand).
+        half-plane.  The ambiguous alternative is (−ka_cand, −kc_cand).
     C_patch : ndarray, shape (Nwin, Nwin), complex
-        Per-patch cross-spectrum  F_ssh · conj(F_σ₀).
+        Per-patch SSH–σ₀ cross-spectrum  F_ssh · conj(F_σ₀).
     Ka, Kc : ndarray, shape (Nwin, Nwin)
         Along-track and cross-track wavenumber grids [rad/m].
     coh_patch : ndarray, shape (Nwin, Nwin)
-        Per-patch coherence (0–1).
+        Per-patch SSH–σ₀ coherence (0–1).
     look_side : {'right', 'left'}
-        SWOT swath side.  Right swath → range ≈ +cross-track.
+        SWOT swath side.  Right swath → radar look ≈ +cross-track.
     dk_rel : float
-        Fractional half-bandwidth around K_peak for the averaging window.
-        Default 0.30 (±30 %).
+        Fractional half-bandwidth around K_peak for the spectral
+        averaging window.  Default 0.30 (±30 %).
     dtheta_win : float
-        Angular half-window in the satellite frame [°].  Default 30°.
+        Angular half-window around the candidate direction [°].
+        Default 30°.
     coh_min : float
-        Minimum coherence to include a pixel in the Im(C) average.
+        Minimum coherence threshold to include a pixel in the average.
         Default 0.05.
 
     Returns
     -------
     ka_true, kc_true : float
         Resolved wavenumber components [rad/m].
-    im_mean : float
-        Diagnostic: coherence-weighted mean Im(C) used for the decision.
-        Positive ↔ wave toward satellite (right swath).
+    D : float
+        Combined disambiguation score.  D > 0 confirms the input
+        candidate; D < 0 means the direction was flipped.
+    im_avg : float
+        Diagnostic: coherence-weighted mean Im(C) (tilt signal).
+    re_avg : float
+        Diagnostic: coherence-weighted mean Re(C) (VB signal).
     """
     K_cand = float(np.sqrt(ka_cand**2 + kc_cand**2))
     if K_cand == 0.0:
-        return float(ka_cand), float(kc_cand), np.nan
+        return float(ka_cand), float(kc_cand), np.nan, np.nan, np.nan
 
-    # Satellite-frame direction of candidate [°, CCW from along-track]
-    theta_cand = np.degrees(np.arctan2(kc_cand, ka_cand))
+    # ── Directional weights (unit-normalised) ─────────────────────────────────
+    # w_tilt: cross-track fraction → tilt modulation reliability
+    # w_vb  : along-track fraction → velocity bunching reliability
+    w_tilt = float(abs(kc_cand) / K_cand)
+    w_vb   = float(abs(ka_cand) / K_cand)
 
-    # Grid quantities
+    # ── Spectral averaging window ─────────────────────────────────────────────
     K_mag      = np.sqrt(Ka**2 + Kc**2)
+    theta_cand = np.degrees(np.arctan2(kc_cand, ka_cand))
     theta_grid = np.degrees(np.arctan2(Kc, Ka))
+    dtheta     = ((theta_grid - theta_cand + 180.0) % 360.0) - 180.0
 
-    # Signed angular distance — wraps correctly
-    dtheta = ((theta_grid - theta_cand + 180.0) % 360.0) - 180.0
-
-    # ── Averaging window ──────────────────────────────────────────────────────
     mask = (
+        np.isfinite(C_patch.real) &
         np.isfinite(C_patch.imag) &
         (np.abs(K_mag - K_cand) <= dk_rel * K_cand) &
         (np.abs(dtheta)          <= dtheta_win) &
@@ -102,26 +161,43 @@ def resolve_180_ardhuin2024(
     )
 
     if not np.any(mask):
-        # Fallback: single grid point closest to candidate, no coherence gate
-        idx     = np.unravel_index(
+        # Fallback: nearest grid point, no coherence gate
+        idx = np.unravel_index(
             np.argmin((Ka - ka_cand)**2 + (Kc - kc_cand)**2), Ka.shape)
-        im_mean = float(C_patch[idx].imag)
+        im_avg = float(C_patch[idx].imag)
+        re_avg = float(C_patch[idx].real)
     else:
-        # Coherence-weighted mean of Im(C)
+        # Coherence-weighted means of Im(C) and Re(C)
         w     = coh_patch[mask]
         w_sum = float(w.sum())
-        im_mean = (float(np.dot(C_patch.imag[mask], w) / w_sum)
-                   if w_sum > 0 else float(np.mean(C_patch.imag[mask])))
+        if w_sum > 0:
+            im_avg = float(np.dot(C_patch.imag[mask], w) / w_sum)
+            re_avg = float(np.dot(C_patch.real[mask], w) / w_sum)
+        else:
+            im_avg = float(np.mean(C_patch.imag[mask]))
+            re_avg = float(np.mean(C_patch.real[mask]))
 
-    # ── Ambiguity decision ────────────────────────────────────────────────────
-    # Right swath: Im > 0 → toward satellite → keep candidate
-    # Left  swath: sign convention flips
-    sign = +1 if look_side == "right" else -1
+    # ── Tilt modulation signal ────────────────────────────────────────────────
+    # Right swath: look ≈ +kc, so Im(C) > 0 confirms kc_cand > 0
+    # Left  swath: look ≈ −kc, sign flips
+    sign_tilt  = +1.0 if look_side == "right" else -1.0
+    tilt_signal = sign_tilt * im_avg
 
-    if sign * im_mean >= 0.0:
-        return float(ka_cand),  float(kc_cand),  im_mean   # confirmed
+    # ── Velocity bunching signal ──────────────────────────────────────────────
+    # Waves opposing satellite (ka < 0): Re(C) > 0  → confirms candidate
+    # Waves same as satellite  (ka > 0): Re(C) < 0  → also confirms candidate
+    # So the confirmatory VB signal is −sign(ka_cand) · Re(C)
+    # Guard against ka_cand == 0 (pure cross-track: w_vb = 0 anyway)
+    sign_ka  = float(np.sign(ka_cand)) if ka_cand != 0.0 else 1.0
+    vb_signal = -sign_ka * re_avg
+
+    # ── Combined disambiguation score ─────────────────────────────────────────
+    D = w_tilt * tilt_signal + w_vb * vb_signal
+
+    if D >= 0.0:
+        return float(ka_cand),  float(kc_cand),  D, im_avg, re_avg
     else:
-        return float(-ka_cand), float(-kc_cand), im_mean   # flipped 180°
+        return float(-ka_cand), float(-kc_cand), D, im_avg, re_avg
 
 
 # ---------------------------------------------------------------------------
@@ -181,18 +257,17 @@ def circular_stats(angles_deg):
                        1 = perfectly clustered, 0 = uniformly scattered
     n        : int     Number of finite samples used
     """
-    a  = np.asarray(angles_deg, dtype=float)
-    a  = a[np.isfinite(a)]
-    n  = len(a)
+    a = np.asarray(angles_deg, dtype=float)
+    a = a[np.isfinite(a)]
+    n = len(a)
 
     if n == 0:
         return np.nan, np.nan, np.nan, 0
 
-    rad   = np.radians(a)
-    S     = np.mean(np.sin(rad))
-    C     = np.mean(np.cos(rad))
-    R     = float(np.sqrt(S**2 + C**2))
-
+    rad      = np.radians(a)
+    S        = np.mean(np.sin(rad))
+    C        = np.mean(np.cos(rad))
+    R        = float(np.sqrt(S**2 + C**2))
     mean_deg = float(np.degrees(np.arctan2(S, C)) % 360.0)
     std_deg  = float(np.degrees(np.sqrt(-2.0 * np.log(R)))) if R < 1.0 else 0.0
 
