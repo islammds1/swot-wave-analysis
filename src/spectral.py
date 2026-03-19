@@ -173,7 +173,7 @@ def welch_cross_spectrum(
     lam_min, lam_max : float   Swell band wavelength limits [m]
     resolve_fn : callable
         resolve_fn(ka_cand, kc_cand, C_patch, Ka, Kc, coh_patch)
-        → (ka_true, kc_true, im_mean)
+        → (ka_true, kc_true, D, im_mean, re_mean)
         See ambiguity.resolve_180_ardhuin2024.
     geo_dir_fn : callable
         geo_dir_fn(ka_true, kc_true) → dir_from_deg  [° CW from North]
@@ -281,7 +281,7 @@ def welch_cross_spectrum(
             coh_peak = float(coh_p[idx_peak])
 
             # ── Ardhuin 2024 ambiguity resolution ─────────────────────────────
-            ka_true, kc_true, _ = resolve_fn(
+            ka_true, kc_true, D, im_mean, re_mean = resolve_fn(
                 ka_p, kc_p, C_p, Ka, Kc, coh_p)
 
             dir_sat = float(np.degrees(np.arctan2(kc_true, ka_true)))
