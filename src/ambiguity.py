@@ -30,15 +30,19 @@ ambiguity for any propagation direction:
    ------------------------------------------
    KaRIN Doppler beam-forming displaces ocean features along the
    satellite track in proportion to their line-of-sight velocity.
-   This imprints σ₀ oscillations that are OUT OF PHASE with SSH when
-   the wave propagates in the satellite flight direction (phase ≈ 180°),
-   and IN PHASE when the wave opposes the satellite (phase ≈ 0°):
+   This imprints σ₀ oscillations whose phase relative to SSH depends
+   on the satellite heading.  Following Ardhuin et al. (2024):
 
-       Re(C) > 0 → wave opposes satellite (ka < 0)
-       Re(C) < 0 → wave same as satellite (ka > 0)
+       vb_signal = Re(C) · sign(cos(θ_track))
 
-   Equivalently, the VB disambiguation signal is −sign(ka) · Re(C),
-   which is positive when the candidate direction is confirmed.
+   where θ_track is the satellite track angle (degrees from East).
+   The sign(cos(θ_track)) factor accounts for the heading geometry:
+     ascending  pass (θ_track ≈ −175°, cos < 0) → signal flips sign
+     descending pass (θ_track ≈  −15°, cos > 0) → signal unchanged
+
+   Since candidates are always taken from the ka ≥ 0 half-plane,
+   sign(ka_cand) = +1 by construction and the only geometric
+   correction needed is sign(cos(θ_track)).
 
    This signal is strong when |ka| is large (near-along-track swell)
    and vanishes for purely cross-track propagation.
@@ -52,7 +56,7 @@ candidate peak so that each contributes in proportion to its reliability:
     w_vb   = |ka_cand| / K_cand   (along-track fraction)
 
     D = w_tilt · (sign_tilt · Im_avg)
-      + w_vb   · (−sign(ka_cand) · Re_avg)
+      + w_vb   · Re_avg · sign(cos(θ_track))
 
     D ≥ 0  →  keep candidate (ka_cand, kc_cand)
     D < 0  →  flip to (−ka_cand, −kc_cand)
@@ -83,6 +87,7 @@ def resolve_180_ardhuin2024(
     Kc,
     coh_patch,
     look_side="right",
+    trackangle=0.0,
     dk_rel=0.30,
     dtheta_win=30.0,
     coh_min=0.05,
@@ -114,6 +119,13 @@ def resolve_180_ardhuin2024(
         Per-patch SSH–σ₀ coherence (0–1).
     look_side : {'right', 'left'}
         SWOT swath side.  Right swath → radar look ≈ +cross-track.
+    trackangle : float
+        Satellite track angle [°], defined as the bearing of the
+        along-track axis measured from East (as returned by
+        get_swot_geometry).  Used to compute sign(cos(θ_track))
+        for the velocity-bunching signal:
+          ascending  pass (θ_track ≈ −175°) → cos < 0 → VB flips
+          descending pass (θ_track ≈  −15°) → cos > 0 → VB unchanged
     dk_rel : float
         Fractional half-bandwidth around K_peak for the spectral
         averaging window.  Default 0.30 (±30 %).
@@ -184,12 +196,11 @@ def resolve_180_ardhuin2024(
     tilt_signal = sign_tilt * im_avg
 
     # ── Velocity bunching signal ──────────────────────────────────────────────
-    # Waves opposing satellite (ka < 0): Re(C) > 0  → confirms candidate
-    # Waves same as satellite  (ka > 0): Re(C) < 0  → also confirms candidate
-    # So the confirmatory VB signal is −sign(ka_cand) · Re(C)
-    # Guard against ka_cand == 0 (pure cross-track: w_vb = 0 anyway)
-    sign_ka  = float(np.sign(ka_cand)) if ka_cand != 0.0 else 1.0
-    vb_signal = -sign_ka * re_avg
+    # Ardhuin et al. (2024): signreal = cos(phase) · sign(ky) · sign(cos(θ_track))
+    # cos(phase) ≈ Re(C)/|C| is absorbed into re_avg (coherence-weighted mean).
+    # Candidates are always from the ka ≥ 0 half-plane, so sign(ka_cand) = +1
+    # by construction — the only heading-dependent correction is sign(cos(θ_track)).
+    vb_signal = re_avg * float(np.sign(np.cos(np.radians(trackangle))))
 
     # ── Combined disambiguation score ─────────────────────────────────────────
     D = w_tilt * tilt_signal + w_vb * vb_signal
