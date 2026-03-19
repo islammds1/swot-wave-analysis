@@ -102,7 +102,7 @@ def resolve_180_ardhuin2024(
     along-track propagating waves:
 
         D = w_tilt · (sign_tilt · Im_avg)
-          + w_vb   · (−sign(ka_cand) · Re_avg)
+      + w_vb   · Re_avg · sign(cos(θ_track))
 
     where w_tilt = |kc_cand|/K and w_vb = |ka_cand|/K.
 
